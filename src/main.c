@@ -12,14 +12,49 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/gpio.h>
 
-static int blink_rate_ms = 0; // 0 = steady ON
+static bool blink_enabled = false;
+static int blink_rate_ms = 0; // 0 is STEADY ON
+static int blink_led_index = -1; // -1 = no LED blinking
+
 static struct k_thread blink_thread_data;
 static K_THREAD_STACK_DEFINE(blink_stack, 512);
 
 #define LED0_NODE DT_ALIAS(led0)
-#if !DT_NODE_HAS_STATUS(LED0_NODE, okay)
-#error "Unsupported board: led0 devicetree alias is not defined"
+#define LED1_NODE DT_ALIAS(led1)
+#define LED2_NODE DT_ALIAS(led2)
+#define LED3_NODE DT_ALIAS(led3)
+static const struct gpio_dt_spec leds[] = {
+#if DT_NODE_HAS_STATUS(LED0_NODE, okay)
+    GPIO_DT_SPEC_GET(LED0_NODE, gpios),
+#else
+    {0},
 #endif
+#if DT_NODE_HAS_STATUS(LED1_NODE, okay)
+    GPIO_DT_SPEC_GET(LED1_NODE, gpios),
+#else
+    {0},
+#endif
+#if DT_NODE_HAS_STATUS(LED2_NODE, okay)
+    GPIO_DT_SPEC_GET(LED2_NODE, gpios),
+#else
+    {0},
+#endif
+#if DT_NODE_HAS_STATUS(LED3_NODE, okay)
+    GPIO_DT_SPEC_GET(LED3_NODE, gpios),
+#else
+    {0},
+#endif
+};
+#define NUM_LEDS 4
+
+struct led_blink {
+    bool enabled;
+    int rate_ms;
+    int64_t last_toggle;  // timestamp of last toggle
+    bool state;
+};
+
+struct led_blink led_blinks[NUM_LEDS];
 
 LOG_MODULE_REGISTER(cdc_acm_echo, LOG_LEVEL_INF);
 
@@ -42,39 +77,86 @@ void process_command(const char *cmd);
 void blink_thread(void *arg1, void *arg2, void *arg3);
 
 static void cmd_blink(const char *args) {
-    int rate = atoi(args);
-    if (rate < 0) {
-        uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: invalid rate\n", 20);
-    } else {
-        blink_rate_ms = rate;
-        uart_fifo_fill(uart_dev, (uint8_t *)"OK\n", 3);
+    int led_num;
+    int rate;
+
+    if (sscanf(args, "%d %d", &led_num, &rate) != 2) {
+        uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: usage BLINK <1-4> <ms>\n", 31);
+        return;
     }
+
+    if (led_num < 1 || led_num > 4 || rate < 0) {
+        uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: invalid arguments\n", 25);
+        return;
+    }
+
+    int index = led_num - 1;
+
+    if (rate == 0) {
+		led_blinks[index].enabled = false;
+		led_blinks[index].state = false;
+		gpio_pin_set_dt(&leds[index], 0);
+	} else {
+		led_blinks[index].enabled = true;
+		led_blinks[index].rate_ms = rate;
+	}
+
+    blink_led_index = index;
+    blink_rate_ms = rate;
+    blink_enabled = true;
+
+    char buf[32];
+    int len = snprintf(buf, sizeof(buf), "Blinking LED %d at %d ms\n", led_num, rate);
+    uart_fifo_fill(uart_dev, (uint8_t *)buf, len);
 }
+
 
 static void cmd_led(const char *args) {
     int led_num;
     char state[8];
+
     if (sscanf(args, "%d %7s", &led_num, state) == 2) {
-        if (led_num < 0 || led_num > 3) {
+        if (led_num < 1 || led_num > 4) {
             uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: invalid LED\n", 20);
             return;
         }
+
+		int index = led_num - 1;
+
+		if (blink_led_index == index) {
+			blink_enabled = false;
+			blink_led_index = -1;
+		}
+
+        const struct gpio_dt_spec *led_spec = &leds[led_num - 1];
+        if (!led_spec->port) {
+            uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: LED not available\n", 26);
+            return;
+        }
+
         if (strcasecmp(state, "ON") == 0) {
-            // TODO: configure correct LED device via devicetree
-            uart_fifo_fill(uart_dev, (uint8_t *)"LED ON\n", 7);
+            gpio_pin_set_dt(led_spec, 1);
+            char buf[32];
+            int len = snprintf(buf, sizeof(buf), "LED %d ON\n", led_num);
+            uart_fifo_fill(uart_dev, (uint8_t *)buf, len);
         } else if (strcasecmp(state, "OFF") == 0) {
-            uart_fifo_fill(uart_dev, (uint8_t *)"LED OFF\n", 8);
+            gpio_pin_set_dt(led_spec, 0);
+            char buf[32];
+            int len = snprintf(buf, sizeof(buf), "LED %d OFF\n", led_num);
+            uart_fifo_fill(uart_dev, (uint8_t *)buf, len);
         } else {
             uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: invalid state\n", 22);
         }
     } else {
         uart_fifo_fill(
             uart_dev,
-            (uint8_t *)"ERROR: usage LED <0-3> <ON/OFF>\n",
-            32
+            (uint8_t *)"ERROR: usage LED <1-4> <ON/OFF>\n",
+            34
         );
     }
 }
+
+
 
 static const struct command_entry command_table[] = {
     { "BLINK", cmd_blink },
@@ -159,10 +241,11 @@ static void interrupt_handler(const struct device *dev, void *user_data) {
 int main(void) {
     int ret;
 
-    if (!gpio_is_ready_dt(&led)) {
-        LOG_ERR("LED device not ready");
-        return 0;
-    }
+    for (int i = 0; i < 4; i++) {
+	if (leds[i].port) {
+		gpio_pin_configure_dt(&leds[i], GPIO_OUTPUT_INACTIVE);
+	}
+	}
     gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
 
     k_thread_create(
@@ -240,17 +323,18 @@ void blink_thread(void *arg1, void *arg2, void *arg3) {
     ARG_UNUSED(arg3);
 
     while (1) {
-        if (blink_rate_ms == 0) {
-            gpio_pin_set_dt(&led, 1); // ON
-            k_sleep(K_MSEC(100));     // avoid tight loop
-        } else {
-            gpio_pin_set_dt(&led, 0); // OFF
-            k_sleep(K_MSEC(blink_rate_ms));
-            gpio_pin_set_dt(&led, 1); // ON
-            k_sleep(K_MSEC(blink_rate_ms));
-        }
-    }
+		int64_t now = k_uptime_get();
+		for (int i = 0; i < NUM_LEDS; i++) {
+			if (led_blinks[i].enabled && (now - led_blinks[i].last_toggle >= led_blinks[i].rate_ms)) {
+				led_blinks[i].state = !led_blinks[i].state;
+				gpio_pin_set_dt(&leds[i], led_blinks[i].state);
+				led_blinks[i].last_toggle = now;
+			}
+		}
+		k_msleep(1);  // tick resolution
+	}
 }
+
 
 void process_command(const char *cmd) {
     char command[16];
