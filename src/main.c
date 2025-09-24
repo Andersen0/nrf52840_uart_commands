@@ -95,7 +95,7 @@ static void cmd_blink(const char *args) {
     if (rate == 0) {
 		led_blinks[index].enabled = false;
 		led_blinks[index].state = false;
-		gpio_pin_set_dt(&leds[index], 0);
+		gpio_pin_set_dt(&leds[index], 1);
 	} else {
 		led_blinks[index].enabled = true;
 		led_blinks[index].rate_ms = rate;
@@ -202,8 +202,15 @@ static void interrupt_handler(const struct device *dev, void *user_data) {
                         process_command(cmd_buffer);
                     }
                     cmd_pos = 0;
-                } else if (cmd_pos < sizeof(cmd_buffer) - 1) {
-                    // Echo the typed character
+                } else if (buffer[i] == 0x08 || buffer[i] == 0x7F) {  
+                    // Handle backspace or delete
+                    if (cmd_pos > 0) {
+                        cmd_pos--;
+                        // Erase from terminal: backspace, space, backspace
+                        uart_fifo_fill(dev, (const uint8_t*)"\b \b", 3);
+                    }
+                } else if (cmd_pos < sizeof(cmd_buffer) - 1 && buffer[i] >= 0x20 && buffer[i] < 0x7F) {
+                    // Printable character
                     uart_fifo_fill(dev, &buffer[i], 1);
                     cmd_buffer[cmd_pos++] = buffer[i];
                 }
