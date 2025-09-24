@@ -3,11 +3,11 @@
 Zephyr RTOS application for the **nRF52840 DK**.
 
 ## Structure
-- `src/main.c` – (skeleton)
+- `src/main.c` – Application
 - `prj.conf` – Zephyr configuration
-- `docs/` – documentation (commands, architecture, etc.)
+- `docs/` – Documentation (commands, architecture, etc.)
 
 ## Build and Flash
 ```bash
-west build -b nrf52840dk_nrf52840 .
+west build
 west flash
