@@ -11,6 +11,8 @@
 #include <zephyr/usb/usbd.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/gpio.h>
+#include "ansi_colors.h"
+#include <stdarg.h>
 
 static bool blink_enabled = false;
 static int blink_rate_ms = 0; // 0 is STEADY ON
@@ -76,17 +78,39 @@ static bool rx_throttled;
 void process_command(const char *cmd);
 void blink_thread(void *arg1, void *arg2, void *arg3);
 
+static void cmd_clear(const char *args) {
+    ARG_UNUSED(args);
+    uart_fifo_fill(uart_dev, (const uint8_t*)ANSI_CLEAR, strlen(ANSI_CLEAR));
+}
+
+/* color wrapper */
+static void uart_printf_color(const char *color, const char *fmt, ...) {
+    char buf[256];   /* large enough for most messages */
+    va_list args;
+
+    va_start(args, fmt);
+    int len = vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+
+    if (len < 0) return;
+
+    /* Write color + text + reset */
+    uart_fifo_fill(uart_dev, (const uint8_t*)color, strlen(color));
+    uart_fifo_fill(uart_dev, (const uint8_t*)buf, len);
+    uart_fifo_fill(uart_dev, (const uint8_t*)ANSI_RESET, strlen(ANSI_RESET));
+}
+
 static void cmd_blink(const char *args) {
     int led_num;
     int rate;
 
     if (sscanf(args, "%d %d", &led_num, &rate) != 2) {
-        uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: usage BLINK <1-4> <ms>\r\n", 31);
+        uart_printf_color(ANSI_RED, "ERROR: usage BLINK <1-4> <ms>\r\n");
         return;
     }
 
     if (led_num < 1 || led_num > 4 || rate < 0) {
-        uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: invalid arguments\r\n", 25);
+        uart_printf_color(ANSI_RED, "ERROR: invalid arguments\r\n");
         return;
     }
 
@@ -105,9 +129,7 @@ static void cmd_blink(const char *args) {
     blink_rate_ms = rate;
     blink_enabled = true;
 
-    char buf[32];
-    int len = snprintf(buf, sizeof(buf), "Blinking LED %d at %d ms\r\n", led_num, rate);
-    uart_fifo_fill(uart_dev, (uint8_t *)buf, len);
+    uart_printf_color(ANSI_GREEN, "Blinking LED %d at %d ms\r\n", led_num, rate);
 }
 
 
@@ -117,7 +139,7 @@ static void cmd_led(const char *args) {
 
     if (sscanf(args, "%d %7s", &led_num, state) == 2) {
         if (led_num < 1 || led_num > 4) {
-            uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: invalid LED\r\n", 20);
+            uart_printf_color(ANSI_RED, "ERROR: invalid LED\r\n");
             return;
         }
 
@@ -130,36 +152,29 @@ static void cmd_led(const char *args) {
 
         const struct gpio_dt_spec *led_spec = &leds[led_num - 1];
         if (!led_spec->port) {
-            uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: LED not available\r\n", 26);
+            uart_printf_color(ANSI_RED, "ERROR: LED not available\r\n");
             return;
         }
 
         if (strcasecmp(state, "ON") == 0) {
             gpio_pin_set_dt(led_spec, 1);
-            char buf[32];
-            int len = snprintf(buf, sizeof(buf), "LED %d ON\r\n", led_num);
-            uart_fifo_fill(uart_dev, (uint8_t *)buf, len);
+            uart_printf_color(ANSI_GREEN, "LED %d ON\r\n", led_num);
         } else if (strcasecmp(state, "OFF") == 0) {
             gpio_pin_set_dt(led_spec, 0);
-            char buf[32];
-            int len = snprintf(buf, sizeof(buf), "LED %d OFF\r\n", led_num);
-            uart_fifo_fill(uart_dev, (uint8_t *)buf, len);
+            uart_printf_color(ANSI_GREEN, "LED %d OFF\r\n", led_num);
         } else {
-            uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: invalid state\r\n", 22);
+            uart_printf_color(ANSI_RED, "ERROR: invalid state\r\n");
         }
     } else {
-        uart_fifo_fill(
-            uart_dev,
-            (uint8_t *)"ERROR: usage LED <1-4> <ON/OFF>\r\n",
-            34
-        );
+        uart_printf_color(ANSI_RED, "ERROR: usage LED <1-4> <ON/OFF>\r\n");
     }
 }
 
 
 static const struct command_entry command_table[] = {
     { "BLINK", cmd_blink },
-    { "LED",   cmd_led }
+    { "LED",   cmd_led },
+    { "CLEAR", cmd_clear }
 };
 
 static void interrupt_handler(const struct device *dev, void *user_data) {
@@ -364,6 +379,6 @@ void process_command(const char *cmd) {
         }
     }
 
-    uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: unknown command\r\n", 23);
+    uart_printf_color(ANSI_RED, "ERROR: unknown command\r");
     uart_fifo_fill(uart_dev, (const uint8_t*)"\n> ", 2);  // <-- add prompt
 }
