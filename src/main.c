@@ -81,12 +81,12 @@ static void cmd_blink(const char *args) {
     int rate;
 
     if (sscanf(args, "%d %d", &led_num, &rate) != 2) {
-        uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: usage BLINK <1-4> <ms>\n", 31);
+        uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: usage BLINK <1-4> <ms>\r\n", 31);
         return;
     }
 
     if (led_num < 1 || led_num > 4 || rate < 0) {
-        uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: invalid arguments\n", 25);
+        uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: invalid arguments\r\n", 25);
         return;
     }
 
@@ -106,7 +106,7 @@ static void cmd_blink(const char *args) {
     blink_enabled = true;
 
     char buf[32];
-    int len = snprintf(buf, sizeof(buf), "Blinking LED %d at %d ms\n", led_num, rate);
+    int len = snprintf(buf, sizeof(buf), "Blinking LED %d at %d ms\r\n", led_num, rate);
     uart_fifo_fill(uart_dev, (uint8_t *)buf, len);
 }
 
@@ -117,7 +117,7 @@ static void cmd_led(const char *args) {
 
     if (sscanf(args, "%d %7s", &led_num, state) == 2) {
         if (led_num < 1 || led_num > 4) {
-            uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: invalid LED\n", 20);
+            uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: invalid LED\r\n", 20);
             return;
         }
 
@@ -130,32 +130,31 @@ static void cmd_led(const char *args) {
 
         const struct gpio_dt_spec *led_spec = &leds[led_num - 1];
         if (!led_spec->port) {
-            uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: LED not available\n", 26);
+            uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: LED not available\r\n", 26);
             return;
         }
 
         if (strcasecmp(state, "ON") == 0) {
             gpio_pin_set_dt(led_spec, 1);
             char buf[32];
-            int len = snprintf(buf, sizeof(buf), "LED %d ON\n", led_num);
+            int len = snprintf(buf, sizeof(buf), "LED %d ON\r\n", led_num);
             uart_fifo_fill(uart_dev, (uint8_t *)buf, len);
         } else if (strcasecmp(state, "OFF") == 0) {
             gpio_pin_set_dt(led_spec, 0);
             char buf[32];
-            int len = snprintf(buf, sizeof(buf), "LED %d OFF\n", led_num);
+            int len = snprintf(buf, sizeof(buf), "LED %d OFF\r\n", led_num);
             uart_fifo_fill(uart_dev, (uint8_t *)buf, len);
         } else {
-            uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: invalid state\n", 22);
+            uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: invalid state\r\n", 22);
         }
     } else {
         uart_fifo_fill(
             uart_dev,
-            (uint8_t *)"ERROR: usage LED <1-4> <ON/OFF>\n",
+            (uint8_t *)"ERROR: usage LED <1-4> <ON/OFF>\r\n",
             34
         );
     }
 }
-
 
 
 static const struct command_entry command_table[] = {
@@ -196,12 +195,16 @@ static void interrupt_handler(const struct device *dev, void *user_data) {
             rb_len = ring_buf_get(&ringbuf, buffer, sizeof(buffer));
             for (int i = 0; i < rb_len; i++) {
                 if (buffer[i] == '\n' || buffer[i] == '\r') {
+                    // Echo newline as CRLF
+                    uart_fifo_fill(dev, (const uint8_t*)"\r\n", 2);
                     cmd_buffer[cmd_pos] = '\0';
                     if (cmd_pos > 0) {
                         process_command(cmd_buffer);
                     }
                     cmd_pos = 0;
                 } else if (cmd_pos < sizeof(cmd_buffer) - 1) {
+                    // Echo the typed character
+                    uart_fifo_fill(dev, &buffer[i], 1);
                     cmd_buffer[cmd_pos++] = buffer[i];
                 }
             }
@@ -348,10 +351,12 @@ void process_command(const char *cmd) {
         for (size_t i = 0; i < ARRAY_SIZE(command_table); i++) {
             if (strcasecmp(command, command_table[i].name) == 0) {
                 command_table[i].handler(args);
+                uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
                 return;
             }
         }
     }
 
-    uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: unknown command\n", 23);
+    uart_fifo_fill(uart_dev, (uint8_t *)"ERROR: unknown command\r\n", 23);
+    uart_fifo_fill(uart_dev, (const uint8_t*)"\n> ", 2);  // <-- add prompt
 }
