@@ -48,7 +48,7 @@ static const struct gpio_dt_spec leds[] = {
 struct led_blink {
     bool enabled;
     int rate_ms;
-    int64_t last_toggle;  // timestamp of last toggle
+    int64_t last_toggle_timestamp;  // timestamp of last toggle
     bool state;
 };
 
@@ -61,7 +61,7 @@ typedef void (*command_handler_t)(const char *args);
 struct command_entry {
     const char *name;
     command_handler_t handler;
-    const char *usage; /* command-specific usage string */
+    const char *usage;
 };
 
 const struct device *const uart_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);
@@ -129,7 +129,7 @@ static void cmd_blink(const char *args) {
     } else {
         led_blinks[index].enabled = true;
         led_blinks[index].rate_ms = rate;
-        led_blinks[index].last_toggle = k_uptime_get();
+        led_blinks[index].last_toggle_timestamp = k_uptime_get();
     }
     uart_printf_color(ANSI_GREEN, "Blinking LED %d at %d ms\r\n", led_num, rate);
     uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
@@ -418,10 +418,10 @@ void blink_thread(void *arg1, void *arg2, void *arg3) {
     while (1) {
         int64_t now = k_uptime_get();
         for (int i = 0; i < NUM_LEDS; i++) {
-            if (led_blinks[i].enabled && (now - led_blinks[i].last_toggle >= led_blinks[i].rate_ms)) {
+            if (led_blinks[i].enabled && (now - led_blinks[i].last_toggle_timestamp >= led_blinks[i].rate_ms)) {
                 led_blinks[i].state = !led_blinks[i].state;
                 gpio_pin_set_dt(&leds[i], led_blinks[i].state);
-                led_blinks[i].last_toggle = now;
+                led_blinks[i].last_toggle_timestamp = now;
             }
         }
         k_msleep(1);  // tick resolution
