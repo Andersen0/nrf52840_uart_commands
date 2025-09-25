@@ -204,7 +204,7 @@ static void interrupt_handler(const struct device *dev, void *user_data) {
                 LOG_ERR("Drop %u bytes", recv_len - rb_len);
             }
 
-            static char cmd_buffer[64];
+            static char cmd_buffer[64]; /* enforces 63 chars + null-termination */
             static int cmd_pos = 0;
 
             rb_len = ring_buf_get(&ringbuf, buffer, sizeof(buffer));
@@ -266,10 +266,11 @@ static void interrupt_handler(const struct device *dev, void *user_data) {
 int main(void) {
     int ret;
 
+    /* Configure leds */
     for (int i = 0; i < 4; i++) {
-	if (leds[i].port) {
-		gpio_pin_configure_dt(&leds[i], GPIO_OUTPUT_INACTIVE);
-	}
+        if (leds[i].port) {
+            gpio_pin_configure_dt(&leds[i], GPIO_OUTPUT_INACTIVE);
+        }
 	}
     gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
 
@@ -318,7 +319,7 @@ int main(void) {
 
     LOG_INF("DTR set");
 
-    /* They are optional, we use them to test the interrupt endpoint */
+    /* These are optional, we use them to test the interrupt endpoint */
     ret = uart_line_ctrl_set(uart_dev, UART_LINE_CTRL_DCD, 1);
     if (ret) {
         LOG_WRN("Failed to set DCD, ret code %d", ret);
