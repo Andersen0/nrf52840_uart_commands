@@ -61,6 +61,7 @@ typedef void (*command_handler_t)(const char *args);
 struct command_entry {
     const char *name;
     command_handler_t handler;
+    const char *usage; /* command-specific usage string */
 };
 
 const struct device *const uart_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);
@@ -73,6 +74,7 @@ static bool rx_throttled;
 
 void process_command(const char *cmd);
 void blink_thread(void *arg1, void *arg2, void *arg3);
+static void print_usage(const char *command_name);
 
 static void cmd_clear(const char *args) {
     ARG_UNUSED(args);
@@ -101,7 +103,7 @@ static void cmd_blink(const char *args) {
     int rate;
 
     if (sscanf(args, "%d %d", &led_num, &rate) != 2) {
-        uart_printf_color(ANSI_RED, "ERROR: usage BLINK <1-4> <ms>\r\n");
+        print_usage("BLINK");
         return;
     }
 
@@ -113,9 +115,9 @@ static void cmd_blink(const char *args) {
     int index = led_num - 1;
 
     if (rate == 0) {
-    led_blinks[index].enabled = false;
-    led_blinks[index].state = true;   // steady ON
-    gpio_pin_set_dt(&leds[index], 1);
+        led_blinks[index].enabled = false;
+        led_blinks[index].state = true;   // steady ON
+        gpio_pin_set_dt(&leds[index], 1);
     } else {
         led_blinks[index].enabled = true;
         led_blinks[index].rate_ms = rate;
@@ -154,16 +156,28 @@ static void cmd_led(const char *args) {
             uart_printf_color(ANSI_RED, "ERROR: invalid state\r\n");
         }
     } else {
-        uart_printf_color(ANSI_RED, "ERROR: usage LED <1-4> <ON/OFF>\r\n");
+        print_usage("LED");
     }
 }
 
 
 static const struct command_entry command_table[] = {
-    { "BLINK", cmd_blink },
-    { "LED",   cmd_led },
-    { "CLEAR", cmd_clear }
+    { "BLINK", cmd_blink, "BLINK <1-4> <ms> (0 = steady ON)" },
+    { "LED",   cmd_led,   "LED <1-4> <ON/OFF>" },
+    { "CLEAR", cmd_clear, "CLEAR" }
 };
+
+/* Look up and print a command's usage string from the command_table. */
+static void print_usage(const char *command_name) {
+    for (size_t i = 0; i < ARRAY_SIZE(command_table); i++) {
+        if (strcasecmp(command_name, command_table[i].name) == 0) {
+            uart_printf_color(ANSI_RED, "ERROR: usage %s\r\n", command_table[i].usage);
+            return;
+        }
+    }
+    /* Fallback if command not found */
+    uart_printf_color(ANSI_RED, "ERROR: invalid usage\r\n");
+}
 
 static void interrupt_handler(const struct device *dev, void *user_data) {
     ARG_UNUSED(user_data);
@@ -259,7 +273,7 @@ int main(void) {
         if (leds[i].port) {
             gpio_pin_configure_dt(&leds[i], GPIO_OUTPUT_INACTIVE);
         }
-	}
+    }
     gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
 
     k_thread_create(
@@ -337,16 +351,16 @@ void blink_thread(void *arg1, void *arg2, void *arg3) {
     ARG_UNUSED(arg3);
 
     while (1) {
-		int64_t now = k_uptime_get();
-		for (int i = 0; i < NUM_LEDS; i++) {
-			if (led_blinks[i].enabled && (now - led_blinks[i].last_toggle >= led_blinks[i].rate_ms)) {
-				led_blinks[i].state = !led_blinks[i].state;
-				gpio_pin_set_dt(&leds[i], led_blinks[i].state);
-				led_blinks[i].last_toggle = now;
-			}
-		}
-		k_msleep(1);  // tick resolution
-	}
+        int64_t now = k_uptime_get();
+        for (int i = 0; i < NUM_LEDS; i++) {
+            if (led_blinks[i].enabled && (now - led_blinks[i].last_toggle >= led_blinks[i].rate_ms)) {
+                led_blinks[i].state = !led_blinks[i].state;
+                gpio_pin_set_dt(&leds[i], led_blinks[i].state);
+                led_blinks[i].last_toggle = now;
+            }
+        }
+        k_msleep(1);  // tick resolution
+    }
 }
 
 
