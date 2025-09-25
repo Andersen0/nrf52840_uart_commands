@@ -11,3 +11,11 @@ Zephyr RTOS application for the **nRF52840 DK**.
 ```bash
 west build
 west flash
+```
+## Future works
+
+🔁 | Optimize USB transactions
+
+🗂️ | Restructure file format
+
+✨ | More LED effects

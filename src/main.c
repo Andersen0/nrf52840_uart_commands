@@ -148,7 +148,7 @@ static void cmd_led(const char *args) {
         }
 
         int index = led_num - 1;
-        led_blinks[index].enabled = false;  // stop blinking if active
+        led_blinks[index].enabled = false;  // Stop blinking if active
 
         const struct gpio_dt_spec *led_spec = &leds[led_num - 1];
         if (!led_spec->port) {
