@@ -14,10 +14,6 @@
 #include "ansi_colors.h"
 #include <stdarg.h>
 
-static bool blink_enabled = false;
-static int blink_rate_ms = 0; // 0 is STEADY ON
-static int blink_led_index = -1; // -1 = no LED blinking
-
 static struct k_thread blink_thread_data;
 static K_THREAD_STACK_DEFINE(blink_stack, 512);
 
@@ -117,18 +113,14 @@ static void cmd_blink(const char *args) {
     int index = led_num - 1;
 
     if (rate == 0) {
-		led_blinks[index].enabled = false;
-		led_blinks[index].state = false;
-		gpio_pin_set_dt(&leds[index], 1);
-	} else {
-		led_blinks[index].enabled = true;
-		led_blinks[index].rate_ms = rate;
-	}
-
-    blink_led_index = index;
-    blink_rate_ms = rate;
-    blink_enabled = true;
-
+    led_blinks[index].enabled = false;
+    led_blinks[index].state = true;   // steady ON
+    gpio_pin_set_dt(&leds[index], 1);
+    } else {
+        led_blinks[index].enabled = true;
+        led_blinks[index].rate_ms = rate;
+        led_blinks[index].last_toggle = k_uptime_get();
+    }
     uart_printf_color(ANSI_GREEN, "Blinking LED %d at %d ms\r\n", led_num, rate);
 }
 
@@ -143,12 +135,8 @@ static void cmd_led(const char *args) {
             return;
         }
 
-		int index = led_num - 1;
-
-		if (blink_led_index == index) {
-			blink_enabled = false;
-			blink_led_index = -1;
-		}
+        int index = led_num - 1;
+        led_blinks[index].enabled = false;  // stop blinking if active
 
         const struct gpio_dt_spec *led_spec = &leds[led_num - 1];
         if (!led_spec->port) {
@@ -380,6 +368,6 @@ void process_command(const char *cmd) {
         }
     }
 
-    uart_printf_color(ANSI_RED, "ERROR: unknown command\r");
-    uart_fifo_fill(uart_dev, (const uint8_t*)"\n> ", 2);  // <-- add prompt
+    uart_printf_color(ANSI_RED, "ERROR: unknown command\r\n");
+    uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);  // <-- add prompt
 }
