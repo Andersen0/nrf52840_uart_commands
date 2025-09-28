@@ -41,7 +41,7 @@ All commands are case-insensitive. Prompt ends with `>`.
 
 * Command parser:
 
-    Implemented with a small command_table[] that maps commands to handler functions for easy extension.
+    Implemented with a small `command_table[]` that maps commands to handler functions for easy extension. Controls input validation by tokenizing in a generic layer.
 
 * LED abstraction:
 

@@ -56,7 +56,7 @@ struct led_blink led_blinks[NUM_LEDS];
 
 LOG_MODULE_REGISTER(cdc_acm_echo, LOG_LEVEL_INF);
 
-typedef void (*command_handler_t)(const char *args);
+typedef void (*command_handler_t)(int argc, char *argv[]);
 
 struct command_entry {
     const char *name;
@@ -71,13 +71,26 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 uint8_t ring_buffer[RING_BUF_SIZE];
 struct ring_buf ringbuf;
 static bool rx_throttled;
+#define MAX_TOKENS 8
 
 /* Forward declarations */
 void process_command(const char *cmd);
 void blink_thread(void *arg1, void *arg2, void *arg3);
 static void print_usage(const char *command_name);
 static void initial_prompt(void);
-static void cmd_help(const char *args);
+static void cmd_help(int argc, char *argv[]);
+
+/* Tokenize input arguments from terminal */
+static int tokenize(char *input, char *argv[], int max_tokens) {
+    int argc = 0;
+    char *p = strtok(input, " \t\r\n");
+    while (p && argc < max_tokens) {
+        argv[argc++] = p;
+        p = strtok(NULL, " \t\r\n");
+    }
+    return argc;
+}
+
 
 /* color wrapper */
 static void uart_printf_color(const char *color, const char *fmt, ...) {
@@ -97,92 +110,105 @@ static void uart_printf_color(const char *color, const char *fmt, ...) {
 }
 
 
-static void cmd_clear(const char *args) {
-    ARG_UNUSED(args);
+static void cmd_clear(int argc, char *argv[]) {
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
     uart_fifo_fill(uart_dev, (const uint8_t*)ANSI_CLEAR, strlen(ANSI_CLEAR));
     initial_prompt();
 }
 
 
-static void cmd_blink(const char *args) {
-    int led_num;
-    int rate;
-
-    if (sscanf(args, "%d %d", &led_num, &rate) != 2) {
+static void cmd_blink(int argc, char *argv[]) {
+    if (argc != 3) {
         print_usage("BLINK");
-        uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
         return;
     }
 
-    if (led_num < 1 || led_num > 4 || rate < 0) {
-        uart_printf_color(ANSI_RED, "ERROR: invalid arguments\r\n");
+    int led_num = atoi(argv[1]);
+    int rate = atoi(argv[2]);
+
+    if (led_num < 1 || led_num > 4) {
+        uart_printf_color(ANSI_RED, "ERROR: LED number must be 1-4\r\n");
+        uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
+        return;
+    }
+    if (rate < 0) {
+        uart_printf_color(ANSI_RED, "ERROR: rate must be >= 0\r\n");
         uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
         return;
     }
 
     int index = led_num - 1;
-
     if (rate == 0) {
         led_blinks[index].enabled = false;
-        led_blinks[index].state = true;   // steady ON
+        led_blinks[index].state = true;
         gpio_pin_set_dt(&leds[index], 1);
+        uart_printf_color(ANSI_GREEN, "LED %d steady ON\r\n", led_num);
     } else {
         led_blinks[index].enabled = true;
         led_blinks[index].rate_ms = rate;
         led_blinks[index].last_toggle_timestamp = k_uptime_get();
+        uart_printf_color(ANSI_GREEN, "Blinking LED %d at %d ms\r\n", led_num, rate);
     }
-    uart_printf_color(ANSI_GREEN, "Blinking LED %d at %d ms\r\n", led_num, rate);
+
     uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
 }
 
 
-static void cmd_led(const char *args) {
-    int led_num;
-    char state[8];
+static void cmd_led(int argc, char *argv[]) {
+    if (argc < 3) {
+        print_usage("LED");
+        return;
+    }
 
-    if (sscanf(args, "%d %7s", &led_num, state) == 2) {
+    const char *state = argv[argc-1];   // last argument = ON/OFF
+    bool on;
+    if (strcasecmp(state, "ON") == 0) {
+        on = true;
+    } else if (strcasecmp(state, "OFF") == 0) {
+        on = false;
+    } else {
+        uart_printf_color(ANSI_RED, "ERROR: invalid state '%s'\r\n", state);
+        uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
+        return;
+    }
+
+    // Process all LED numbers except the last token
+    for (int i = 1; i < argc-1; i++) {
+        int led_num = atoi(argv[i]);
         if (led_num < 1 || led_num > 4) {
-            uart_printf_color(ANSI_RED, "ERROR: invalid LED\r\n");
-            uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
-            return;
+            uart_printf_color(ANSI_RED, "ERROR: LED number %d invalid\r\n", led_num);
+            continue;
         }
 
         int index = led_num - 1;
-        led_blinks[index].enabled = false;  // Stop blinking if active
+        led_blinks[index].enabled = false;  // stop blinking
 
-        const struct gpio_dt_spec *led_spec = &leds[led_num - 1];
+        const struct gpio_dt_spec *led_spec = &leds[index];
         if (!led_spec->port) {
-            uart_printf_color(ANSI_RED, "ERROR: LED not available\r\n");
-            uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
-            return;
+            uart_printf_color(ANSI_RED, "ERROR: LED %d not available\r\n", led_num);
+            continue;
         }
 
-        if (strcasecmp(state, "ON") == 0) {
-            gpio_pin_set_dt(led_spec, 1);
-            uart_printf_color(ANSI_GREEN, "LED %d ON\r\n", led_num);
-        } else if (strcasecmp(state, "OFF") == 0) {
-            gpio_pin_set_dt(led_spec, 0);
-            uart_printf_color(ANSI_GREEN, "LED %d OFF\r\n", led_num);
-        } else {
-            uart_printf_color(ANSI_RED, "ERROR: invalid state\r\n");
-        }
-    } else {
-        print_usage("LED");
+        gpio_pin_set_dt(led_spec, on ? 1 : 0);
+        uart_printf_color(ANSI_GREEN, "LED %d %s\r\n", led_num, on ? "ON" : "OFF");
     }
+
     uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
 }
 
 
 static const struct command_entry command_table[] = {
     { "BLINK", cmd_blink, "BLINK <1-4> <ms> (0 = steady ON)" },
-    { "LED",   cmd_led,   "LED <1-4> <ON/OFF>" },
+    { "LED",   cmd_led,   "LED <n...> <ON/OFF>" },
     { "CLEAR", cmd_clear, "CLEAR" },
-    { "HELP", cmd_help, "HELP"}
+    { "HELP",  cmd_help,  "HELP" }
 };
 
 
-static void cmd_help(const char *args) {
-    ARG_UNUSED(args);
+static void cmd_help(int argc, char *argv[]) {
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
 
     uart_printf_color(ANSI_YELLOW, "Available commands:\r\n");
     for (size_t i = 0; i < ARRAY_SIZE(command_table); i++) {
@@ -220,24 +246,24 @@ static void initial_prompt(void) {
 
 
 void process_command(const char *cmd) {
-    char command[16];
-    const char *args = "";
+    char buf[64];
+    strncpy(buf, cmd, sizeof(buf));
+    buf[sizeof(buf)-1] = '\0';
 
-    // Split first token (command) from args
-    if (sscanf(cmd, "%15s", command) == 1) {
-        args = cmd + strlen(command);
-        while (*args == ' ') args++; // skip spaces
+    char *argv[MAX_TOKENS];
+    int argc = tokenize(buf, argv, MAX_TOKENS);
 
-        for (size_t i = 0; i < ARRAY_SIZE(command_table); i++) {
-            if (strcasecmp(command, command_table[i].name) == 0) {
-                command_table[i].handler(args);
-                return;
-            }
+    if (argc == 0) return; // empty line
+
+    for (size_t i = 0; i < ARRAY_SIZE(command_table); i++) {
+        if (strcasecmp(argv[0], command_table[i].name) == 0) {
+            command_table[i].handler(argc, argv);
+            return;
         }
     }
 
     uart_printf_color(ANSI_RED, "ERROR: unknown command\r\n");
-    uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);  // <-- add prompt
+    uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
 }
 
 
