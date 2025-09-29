@@ -21,6 +21,23 @@ static K_THREAD_STACK_DEFINE(blink_stack, 512);
 
 #define MORSE_UNIT_MS 200
 
+struct morse_state {
+    bool active;
+    const char *text;
+    size_t pos;          // current character index in text
+    const char *pattern; // current morse pattern string (".-"…)
+    size_t pat_pos;      // index in current pattern
+    int phase;           // 0=idle, 1=on, 2=off
+    int64_t deadline;    // when to switch phase
+};
+
+static struct k_thread morse_thread_data;
+static K_THREAD_STACK_DEFINE(morse_stack, 512);
+
+void morse_thread(void *a, void *b, void *c);
+
+static struct morse_state morse;
+
 #define LED0_NODE DT_ALIAS(led0)
 #define LED1_NODE DT_ALIAS(led1)
 #define LED2_NODE DT_ALIAS(led2)
@@ -212,18 +229,6 @@ static const char* morse_lookup(char c) {
     return NULL;
 }
 
-static void morse_blink_pattern(const char *pattern) {
-    const struct gpio_dt_spec *led_spec = &leds[0]; // LED1 (index 0)
-    if (!led_spec->port) return;
-
-    for (const char *p = pattern; *p; p++) {
-        int duration = (*p == '.') ? MORSE_UNIT_MS : (3 * MORSE_UNIT_MS);
-        gpio_pin_set_dt(led_spec, 1);
-        k_msleep(duration);
-        gpio_pin_set_dt(led_spec, 0);
-        k_msleep(MORSE_UNIT_MS);  // space between symbols
-    }
-}
 
 static void cmd_morse(int argc, char *argv[]) {
     if (argc < 2) {
@@ -231,24 +236,22 @@ static void cmd_morse(int argc, char *argv[]) {
         return;
     }
 
-    uart_printf_color(ANSI_GREEN, "Transmitting in Morse: ");
-    for (int i = 1; i < argc; i++) {
-        uart_printf_color(ANSI_WHITE, "%s ", argv[i]);
-    }
-    uart_fifo_fill(uart_dev, (const uint8_t*)"\r\n", 2);
+    static char text_buf[128];
+    text_buf[0] = '\0';
 
     for (int i = 1; i < argc; i++) {
-        const char *word = argv[i];
-        for (const char *p = word; *p; p++) {
-            const char *pattern = morse_lookup(*p);
-            if (pattern) {
-                morse_blink_pattern(pattern);
-                k_msleep(2 * MORSE_UNIT_MS); // already had 1 unit, total 3 between letters
-            }
+        strncat(text_buf, argv[i], sizeof(text_buf) - strlen(text_buf) - 2);
+        if (i < argc - 1) {
+            strncat(text_buf, " ", sizeof(text_buf) - strlen(text_buf) - 1);
         }
-        k_msleep(4 * MORSE_UNIT_MS); // already had 3 units, total 7 between words
     }
 
+    morse.text = text_buf;
+    morse.pos = 0;
+    morse.phase = 0;
+    morse.active = true;
+
+    uart_printf_color(ANSI_GREEN, "Morse transmission started: %s\r\n", text_buf);
     uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
 }
 
@@ -350,28 +353,31 @@ static void interrupt_handler(const struct device *dev, void *user_data) {
                 LOG_ERR("Drop %u bytes", recv_len - rb_len);
             }
 
-            static char cmd_buffer[64]; /* enforces 63 chars + null-termination */
+           /* 
+            * Process raw UART characters into a line buffer.
+            * - Handles printable characters, backspace/delete, and CR/LF line endings.
+            * - Echoes characters back to the terminal.
+            * - When a full line is ready (terminated by CR or LF), calls process_command().
+            */
+            static char cmd_buffer[65]; /* 64 chars + null-termination */
             static int cmd_pos = 0;
 
             rb_len = ring_buf_get(&ringbuf, buffer, sizeof(buffer));
             for (int i = 0; i < rb_len; i++) {
-                if (buffer[i] == '\n' || buffer[i] == '\r') {
-                    // Echo newline as CRLF
-                    uart_fifo_fill(dev, (const uint8_t*)"\r\n", 2);
+                if (buffer[i] == '\n' || buffer[i] == '\r') { 
+                    uart_fifo_fill(dev, (const uint8_t*)"\r\n", 2); /* Echo newline as CRLF */
                     cmd_buffer[cmd_pos] = '\0';
                     if (cmd_pos > 0) {
                         process_command(cmd_buffer);
                     }
                     cmd_pos = 0;
-                } else if (buffer[i] == 0x08 || buffer[i] == 0x7F) {  
-                    // Handle backspace or delete
+                } else if (buffer[i] == 0x08 || buffer[i] == 0x7F) {  /* Handle backspace or delete */
                     if (cmd_pos > 0) {
                         cmd_pos--;
-                        // Erase from terminal: backspace, space, backspace
                         uart_fifo_fill(dev, (const uint8_t*)"\b \b", 3);
                     }
                 } else if (cmd_pos < sizeof(cmd_buffer) - 1 && buffer[i] >= 0x20 && buffer[i] < 0x7F) {
-                    // Printable character
+                    /* Printable character */
                     uart_fifo_fill(dev, &buffer[i], 1);
                     cmd_buffer[cmd_pos++] = buffer[i];
                 }
@@ -428,6 +434,16 @@ int main(void) {
         NULL, NULL, NULL,
         5, 0, K_NO_WAIT
     );
+
+    k_thread_create(
+        &morse_thread_data,
+        morse_stack,
+        K_THREAD_STACK_SIZEOF(morse_stack),
+        morse_thread,
+        NULL, NULL, NULL,
+        5, 0, K_NO_WAIT
+    );
+
 
     if (!device_is_ready(uart_dev)) {
         LOG_ERR("CDC ACM device not ready");
@@ -507,5 +523,70 @@ void blink_thread(void *arg1, void *arg2, void *arg3) {
             }
         }
         k_msleep(1);  // tick resolution
+    }
+}
+
+/* Morse code functionality fully developed by ChatGPT */
+void morse_thread(void *a, void *b, void *c) {
+    ARG_UNUSED(a); ARG_UNUSED(b); ARG_UNUSED(c);
+    const struct gpio_dt_spec *led_spec = &leds[0]; // LED1
+
+    while (1) {
+        int64_t now = k_uptime_get();
+
+        if (!morse.active) {
+            k_msleep(10);
+            continue;
+        }
+
+        if (now < morse.deadline) {
+            k_msleep(1);
+            continue;
+        }
+
+        if (morse.phase == 0) { // start new char or finish
+            char ch = morse.text[morse.pos];
+            if (ch == '\0') {
+                morse.active = false; // done
+                gpio_pin_set_dt(led_spec, 0);
+                continue;
+            }
+
+            if (ch == ' ') {
+                morse.pos++;
+                morse.deadline = now + 7 * MORSE_UNIT_MS;
+                continue;
+            }
+
+            morse.pattern = morse_lookup(ch);
+            morse.pat_pos = 0;
+            morse.phase = 1;
+            continue;
+        }
+
+        if (morse.phase == 1) { // LED ON
+            if (!morse.pattern || morse.pattern[morse.pat_pos] == '\0') {
+                morse.phase = 0;
+                morse.pos++;
+                morse.deadline = now + 3 * MORSE_UNIT_MS;
+                gpio_pin_set_dt(led_spec, 0);
+                continue;
+            }
+
+            int dur = (morse.pattern[morse.pat_pos] == '.') ?
+                        MORSE_UNIT_MS : (3 * MORSE_UNIT_MS);
+            gpio_pin_set_dt(led_spec, 1);
+            morse.deadline = now + dur;
+            morse.phase = 2;
+            continue;
+        }
+
+        if (morse.phase == 2) { // LED OFF after dot/dash
+            gpio_pin_set_dt(led_spec, 0);
+            morse.pat_pos++;
+            morse.deadline = now + MORSE_UNIT_MS;
+            morse.phase = 1;
+            continue;
+        }
     }
 }

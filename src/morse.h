@@ -4,7 +4,7 @@
 
 struct morse_entry {
     char c;
-    const char *pattern;   // '.' = dot, '-' = dash
+    const char *pattern;
 };
 
 static const struct morse_entry morse_table[] = {
