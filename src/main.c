@@ -201,8 +201,8 @@ static void cmd_led(int argc, char *argv[]) {
 static const struct command_entry command_table[] = {
     { "BLINK", cmd_blink, "BLINK <1-4> <ms> (0 = steady ON)" },
     { "LED",   cmd_led,   "LED <n...> <ON/OFF>" },
-    { "CLEAR", cmd_clear, "CLEAR" },
-    { "HELP",  cmd_help,  "HELP" }
+    { "CLEAR", cmd_clear, "Clears the terminal" },
+    { "HELP",  cmd_help,  "Print the list of available commands" }
 };
 
 
