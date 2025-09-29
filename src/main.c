@@ -13,9 +13,13 @@
 #include <zephyr/drivers/gpio.h>
 #include "ansi_colors.h"
 #include <stdarg.h>
+#include "morse.h"
+#include <ctype.h>
 
 static struct k_thread blink_thread_data;
 static K_THREAD_STACK_DEFINE(blink_stack, 512);
+
+#define MORSE_UNIT_MS 200
 
 #define LED0_NODE DT_ALIAS(led0)
 #define LED1_NODE DT_ALIAS(led1)
@@ -198,11 +202,63 @@ static void cmd_led(int argc, char *argv[]) {
 }
 
 
+static const char* morse_lookup(char c) {
+    c = toupper((unsigned char)c);
+    for (int i = 0; morse_table[i].c; i++) {
+        if (morse_table[i].c == c) {
+            return morse_table[i].pattern;
+        }
+    }
+    return NULL;
+}
+
+static void morse_blink_pattern(const char *pattern) {
+    const struct gpio_dt_spec *led_spec = &leds[0]; // LED1 (index 0)
+    if (!led_spec->port) return;
+
+    for (const char *p = pattern; *p; p++) {
+        int duration = (*p == '.') ? MORSE_UNIT_MS : (3 * MORSE_UNIT_MS);
+        gpio_pin_set_dt(led_spec, 1);
+        k_msleep(duration);
+        gpio_pin_set_dt(led_spec, 0);
+        k_msleep(MORSE_UNIT_MS);  // space between symbols
+    }
+}
+
+static void cmd_morse(int argc, char *argv[]) {
+    if (argc < 2) {
+        print_usage("MORSE");
+        return;
+    }
+
+    uart_printf_color(ANSI_GREEN, "Transmitting in Morse: ");
+    for (int i = 1; i < argc; i++) {
+        uart_printf_color(ANSI_WHITE, "%s ", argv[i]);
+    }
+    uart_fifo_fill(uart_dev, (const uint8_t*)"\r\n", 2);
+
+    for (int i = 1; i < argc; i++) {
+        const char *word = argv[i];
+        for (const char *p = word; *p; p++) {
+            const char *pattern = morse_lookup(*p);
+            if (pattern) {
+                morse_blink_pattern(pattern);
+                k_msleep(2 * MORSE_UNIT_MS); // already had 1 unit, total 3 between letters
+            }
+        }
+        k_msleep(4 * MORSE_UNIT_MS); // already had 3 units, total 7 between words
+    }
+
+    uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
+}
+
+
 static const struct command_entry command_table[] = {
     { "BLINK", cmd_blink, "BLINK <1-4> <ms> (0 = steady ON)" },
     { "LED",   cmd_led,   "LED <n...> <ON/OFF>" },
     { "CLEAR", cmd_clear, "CLEAR" },
-    { "HELP",  cmd_help,  "HELP" }
+    { "HELP",  cmd_help,  "HELP" },
+    { "MORSE", cmd_morse, "MORSE <text>" }
 };
 
 
