@@ -535,7 +535,7 @@ void morse_thread(void *a, void *b, void *c) {
         int64_t now = k_uptime_get();
 
         if (!morse.active) {
-            k_msleep(10);
+            k_msleep(100);
             continue;
         }
 
