@@ -56,9 +56,10 @@ All commands are case-insensitive. Prompt ends with `>`.
 * `Perplexity`
     - Finding resources
 * `ChatGPT`
+    - Simplify code
     - Clarify sample code and Zephyr error messages
     - Suggest command parsing logic and command functions
-    - Provide guidance on using threads in Zephyr (e.g., `blink_thread`) 
+    - Provide guidance on using threads in Zephyr (e.g., `blink_thread`)
     - Draft and refine documentation (`README`, `Application messages`)
 
 ## Future works
