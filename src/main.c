@@ -58,12 +58,6 @@ LOG_MODULE_REGISTER(cdc_acm_echo, LOG_LEVEL_INF);
 
 typedef void (*command_handler_t)(int argc, char *argv[]);
 
-struct command_entry {
-    const char *name;
-    command_handler_t handler;
-    const char *usage;
-};
-
 const struct device *const uart_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);
 static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
 
@@ -198,11 +192,18 @@ static void cmd_led(int argc, char *argv[]) {
 }
 
 
+struct command_entry {
+    const char *name;
+    command_handler_t handler;
+    const char *usage;
+    const char *description;
+};
+
 static const struct command_entry command_table[] = {
-    { "BLINK", cmd_blink, "BLINK <1-4> <ms> (0 = steady ON)" },
-    { "LED",   cmd_led,   "LED <n...> <ON/OFF>" },
-    { "CLEAR", cmd_clear, "Clears the terminal" },
-    { "HELP",  cmd_help,  "Print the list of available commands" }
+    { "BLINK", cmd_blink, "BLINK <1-4> <ms> (0 = steady ON)", "Toggles a given LED per rate in milliseconds" },
+    { "LED",   cmd_led,   "LED <n...> <ON/OFF>",              "Toggles 1-4 LEDs ON or OFF" },
+    { "CLEAR", cmd_clear, "CLEAR",                            "Clears the terminal" },
+    { "HELP",  cmd_help,  "HELP",                             "Print the list of available commands" }
 };
 
 
@@ -213,7 +214,7 @@ static void cmd_help(int argc, char *argv[]) {
     uart_printf_color(ANSI_YELLOW, "Available commands:\r\n");
     for (size_t i = 0; i < ARRAY_SIZE(command_table); i++) {
         uart_printf_color(ANSI_GREEN, "  %s", command_table[i].name);
-        uart_printf_color(ANSI_WHITE, " - %s\r\n", command_table[i].usage);
+        uart_printf_color(ANSI_WHITE, " - %s\r\n", command_table[i].description);
     }
     uart_fifo_fill(uart_dev, (const uint8_t*)"> ", 2);
 }
@@ -450,6 +451,6 @@ void blink_thread(void *arg1, void *arg2, void *arg3) {
                 led_blinks[i].last_toggle_timestamp = now;
             }
         }
-        k_msleep(1);  // tick resolution
+        k_msleep(100);  // tick resolution
     }
 }
