@@ -18,8 +18,8 @@ It provides a simple text-based command interface over USB to control the develo
     west flash
     ```
 3. **Connect via USB**
-* Plug the nRF52840-DK into your PC via the nRF USB microUSB port.
-* A virtual COM port (`/dev/ttyACM0` on Linux, `COMx` on Windows) will appear.
+* Plug the nRF52840-DK into your PC via the nRF USB microUSB port. Make sure to provide power to the board. For example, via external supply with the other MicroUSB port, or a C2032 battery.
+* A virtual serial port (`/dev/ttyACM0` on Linux, `COMx` on Windows) will appear.
 * Open it with your favorite terminal program with a baudrate of 115200:
     ```bash
     screen /dev/ttyACM0 115200
@@ -28,10 +28,10 @@ It provides a simple text-based command interface over USB to control the develo
 
 All commands are case-insensitive. Prompt ends with `>`.
 
-* `HELP` - Show available commands and usage
+* `HELP` - Show available commands and descriptions
 * `CLEAR` - Clears the terminal screen and reprints the initial prompt
 * `LED <1-4> <ON|OFF>` - Turns a specific LED steady ON or OFF
-* `BLINK <1-4> <ms>` - Makes a specific LED blink wih a given period in milliseconds.
+* `BLINK <1-4> <ms>` - Makes a specific LED blink with a given period in milliseconds.
     - `<ms> = 0` -> LED stays STEADY ON
 
 ## Design Choices
@@ -65,14 +65,14 @@ All commands are case-insensitive. Prompt ends with `>`.
 
 * Add command history and line editing (arrow key navigation, etc.).
 
-* Implement input validation with better error messages.
-
 * Support saving LED states across resets (using flash or settings subsystem).
 
-* Expand commands (e.g., STATUS to report current LED states).
+* Expand commands (e.g., STATUS to report current LED states, or MORSE to convert text to blinking LEDs).
 
 * Optimize USB transactions
 
-* Restructure file format
+* Restructure files
 
-* More LED effects
+* Remove straining work out of interrupt_handler
+
+* Blink thread efficiency
