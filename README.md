@@ -1,6 +1,6 @@
 # CDC-ACM LED Control for nRF52840-DK
 
-This project is a USB CDC-ACM (virtual COM port) application for the Nordic **nRF52840-DK**, built and tested with **nRF Connect SDK v3.1.1 (Zephyr RTOS)**.  
+This project is a USB CDC-ACM (virtual COM port) application for the Nordic **nRF52840-DK**, built and tested with **nRF Connect for VS Code Extension v3.1.1 (Zephyr RTOS)**.  
 It provides a simple text-based command interface over USB to control the development kit’s LEDs.
 
 ---
